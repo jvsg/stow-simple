@@ -16,13 +16,9 @@
 ## Process this file with Automake to produce Makefile.in
 
 bin_SCRIPTS = bin/stow bin/chkstow
-info_TEXINFOS = doc/stow.texi
 dist_man_MANS = doc/stow.8
-PDF = doc/manual.pdf
-HTML = doc/manual-single.html
 dist_doc_DATA = \
 	README.md INSTALL.md \
-	$(PDF) $(HTML) doc/version.texi \
 	ChangeLog doc/ChangeLog.OLD
 
 # automake magic to define where *_DATA files get installed:
@@ -32,8 +28,6 @@ pmstowdir = $(pmdir)/Stow
 pm_DATA = lib/Stow.pm
 pmstow_DATA = lib/Stow/Util.pm
 
-TEXINFO_TEX = doc/texinfo.tex
-export TEXI2DVI_BUILD_MODE = clean
 AM_MAKEINFOFLAGS = -I $(srcdir)
 
 # We require this -I parameter to ensure that the include of the
@@ -44,9 +38,6 @@ AM_MAKEINFOFLAGS = -I $(srcdir)
 #
 # even though it annoyingly produces a warning with the -Wall option
 # to AM_INIT_AUTOMAKE which has to be silenced via -Wno-override.
-TEXI2DVI = texi2dvi $(AM_MAKEINFOFLAGS)
-
-doc_deps = $(info_TEXINFOS) doc/version.texi
 
 DEFAULT_IGNORE_LIST = $(srcdir)/default-ignore-list
 
@@ -93,9 +84,7 @@ $(TESTS_OUT):
 CPAN_FILES = MANIFEST MANIFEST.SKIP Build.PL META.yml META.json
 EXTRA_DIST = \
 	bin/stow.in bin/chkstow.in lib/Stow.pm.in lib/Stow/Util.pm.in \
-	doc/manual-split \
 	$(TESTS) t/testutil.pm \
-	$(TEXINFO_TEX) \
 	$(DEFAULT_IGNORE_LIST) \
 	$(CPAN_FILES)
 CLEANFILES = $(bin_SCRIPTS) $(pm_DATA) $(pmstow_DATA)
@@ -180,101 +169,6 @@ cpanm:
 doc/stow.8: bin/stow.in Makefile.am
 	[ -d doc ] || mkdir doc # required in vpath mode
 	$(edit) < $< | pod2man --name stow --section 8 > $@
-
-# We use automake's built-in rule to generate stow.info.  The built-in
-# rules would also generate doc/stow.html and doc/stow.pdf, but after
-# installation we want $(docdir) (typically /usr/share/doc/stow/) to
-# contain manual-single.html, manual.pdf, and manual-split/*.html, to
-# make it explicitly obvious that these files contain the user manual
-# rather than some other Stow-related documentation.
-#
-# If it were not for a troublesome dependency on doc/$(am__dirstamp):
-#
-#   http://article.gmane.org/gmane.comp.sysutils.automake.general/13192
-#
-# we could have achieved this using the built-in rules combined with
-# install-data-hook to rename from stow.pdf to manual.pdf etc. on
-# install.  Instead, by overriding the built-in rules with modified
-# versions, we can kill both birds with one stone.
-
-# Generating the single-page HTML version used to be done with the old
-# texi2html, which is no longer maintained.  This rule is not used,
-# but is kept to allow comparing of results during the transition, and
-# potentially longer for posterity.
-doc/manual-single-old-texi2html.html: $(doc_deps)
-	texi2html --P=$(srcdir) --output=$@ -expandinfo -menu -monolithic -verbose $<
-
-# One alternative to the old texi2html approach is to use the texi2html
-# wrapper around texi2any which is provided as a partial drop-in replacement:
-#
-# https://www.gnu.org/software/texinfo/manual/texinfo/html_node/texi2html.html#texi2html
-#
-# Differences to the old texi2html:
-#
-#   - Doesn't wrap @file{foo} paths with quotes, which looks better.
-#   - Missing certain sections
-doc/manual-single-texi2html-wrapper.html: $(doc_deps)
-	texi2any -P $(srcdir) --output=$@ --verbose \
-		-c TEXI2HTML=1 -c SHOW_MENU=1 -c MONOLITHIC=1 $<
-
-.PHONY: manual-single-html-all
-manual-single-html-all: \
-	$(HTML) \
-	doc/manual-single-texi2html-wrapper.html \
-	doc/manual-single-old-texi2html.html
-
-# Modern approach using $(MAKEINFOHTML) --no-split
-# Differences to the older two approaches:
-#
-#   - Nicer navigation links between sections
-$(HTML): $(doc_deps)
-	[ -d doc ] || mkdir doc # required in vpath mode
-	-rm -f $@
-	$(MAKEINFOHTML) $(AM_MAKEINFOHTMLFLAGS) $(MAKEINFOFLAGS) -I doc -I $(srcdir)/doc \
-		-c USE_TITLEPAGE_FOR_TITLE=1 --no-split -o $@ \
-		`test -f 'doc/stow.texi' || echo '$(srcdir)/'`doc/stow.texi
-
-$(PDF): $(doc_deps)
-	TEXINPUTS="$(am__TEXINFO_TEX_DIR)$(PATH_SEPARATOR)$$TEXINPUTS" \
-	MAKEINFO='$(MAKEINFO) $(AM_MAKEINFOFLAGS) $(MAKEINFOFLAGS) -I doc -I $(srcdir)/doc' \
-	$(TEXI2PDF) -o $@ `test -f 'doc/stow.texi' || echo '$(srcdir)/'`doc/stow.texi
-
-doc/manual-split: $(doc_deps)
-	rm -rf $@.new
-	if $(MAKEINFOHTML) $(AM_MAKEINFOHTMLFLAGS) $(MAKEINFOFLAGS) -I doc -I $(srcdir)/doc \
-	 -o $@.new `test -f 'doc/stow.texi' || echo '$(srcdir)/'`doc/stow.texi; \
-	then \
-	  rm -rf $@; \
-	  mv $@.new $@; \
-	else \
-	  rm -Rf $@.new $@; \
-	  exit 1; \
-	fi
-
-# The split version of the manual is copied to $(docdir)/manual-split
-# by install-data-hook.  The whole subdirectory is included via
-# EXTRA_DIST in order to avoid having to list each file explicitly in
-# dist_doc_DATA, since automake doesn't support wildcards, and
-# dist_doc_DATA cannot refer to directories while EXTRA_DIST can (go
-# figure ...)
-
-install-data-hook: doc/manual-split
-	cp -r $(srcdir)/doc/manual-split $(DESTDIR)$(docdir)
-
-uninstall-hook:
-	chmod u+w -R $(DESTDIR)$(docdir)/manual-split
-	rm -rf $(DESTDIR)$(docdir)/manual-split
-
-# Using install-data-hook has the slightly annoying disadvantage that
-# by default the split version of the manual isn't automatically
-# rebuilt during development by a simple `make'.  A workaround hack
-# for this is to piggy-back the dependency onto manual-single.html,
-# which *is* automatically rebuilt by `make':
-$(HTML): doc/manual-split
-
-# With the above hack, this probably isn't necessary but is safer to
-# keep in anyway:
-dist-hook: doc/manual-split
 
 dist-hook: $(dist_man_MANS)
 ## If we are creating a distribution from a git checkout, ensure
